@@ -39,8 +39,8 @@ def banner() -> None:
 def main() -> None:
     try:
         bot = LocalBot()
-    except (OSError, UnicodeError) as exc:
-        print(f"خطا در آماده‌سازی حافظه محلی: {exc}")
+    except (OSError, UnicodeError):
+        print("خطا در آماده‌سازی حافظه محلی. مسیر دسترسی و مجوز پوشه data را بررسی کن.")
         return
 
     clear()
@@ -64,7 +64,8 @@ def main() -> None:
         if command == "/clear":
             clear(); banner(); continue
         if command == "/help":
-            print("/clear پاک‌کردن صفحه | /memory نمایش حافظه | /stats آمار | /forget حذف حافظه | /about درباره ربات | /exit خروج\n")
+            print("/clear پاک‌کردن صفحه | /memory نمایش حافظه | /stats آمار | /forget حذف حافظه | /about درباره ربات | /exit خروج")
+            print("برای محاسبه امن بنویس: حساب کن: ۱۲ + ۸\n")
             continue
         if command == "/memory":
             try:
