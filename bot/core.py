@@ -18,28 +18,16 @@ MAX_NAME_LENGTH = 80
 MAX_MEMORY_TEXT_ITEMS = 10
 MAX_EXPRESSION_LENGTH = 80
 
-_BINARY_OPS = {
-    ast.Add: operator.add,
-    ast.Sub: operator.sub,
-    ast.Mult: operator.mul,
-    ast.Div: operator.truediv,
-    ast.FloorDiv: operator.floordiv,
-    ast.Mod: operator.mod,
-    ast.Pow: operator.pow,
-}
+_BINARY_OPS = {ast.Add: operator.add, ast.Sub: operator.sub, ast.Mult: operator.mul, ast.Div: operator.truediv, ast.FloorDiv: operator.floordiv, ast.Mod: operator.mod, ast.Pow: operator.pow}
 _UNARY_OPS = {ast.UAdd: operator.pos, ast.USub: operator.neg}
-_DIGIT_TRANSLATION = str.maketrans(
-    "يىكۀةؤإأٱ۰۱۲۳۴۵۶۷۸۹٠١٢٣٤٥٦٧٨٩",
-    "ییکههوااا01234567890123456789",
-)
+_DIGIT_TRANSLATION = str.maketrans("يىكۀةؤإأٱ۰۱۲۳۴۵۶۷۸۹٠١٢٣٤٥٦٧٨٩", "ییکههوااا01234567890123456789")
 
 
 def normalize(text: str) -> str:
     if not isinstance(text, str):
         return ""
     text = text.translate(_DIGIT_TRANSLATION)
-    text = re.sub(r"[\u200b\u200d\ufeff]", "", text)
-    text = text.replace("\u200c", " ")
+    text = re.sub(r"[\u200b\u200d\ufeff]", "", text).replace("\u200c", " ")
     return re.sub(r"\s+", " ", text.strip().casefold())
 
 
@@ -48,10 +36,7 @@ def _finite(value: int | float, limit: float) -> bool:
 
 
 def _safe_calculate(expression: str) -> int | float:
-    """Evaluate a small arithmetic language without executing arbitrary code."""
-    if not expression or len(expression) > MAX_EXPRESSION_LENGTH:
-        raise ValueError("invalid length")
-    if not re.fullmatch(r"[0-9+\-*/%.() ]+", expression):
+    if not expression or len(expression) > MAX_EXPRESSION_LENGTH or not re.fullmatch(r"[0-9+\-*/%.() ]+", expression):
         raise ValueError("unsupported expression")
     tree = ast.parse(expression, mode="eval")
 
@@ -95,15 +80,11 @@ class LocalBot:
                 if not isinstance(item, dict):
                     continue
                 if item.get("fact") == "name" and isinstance(item.get("value"), str):
-                    name = item["value"].strip()[:MAX_NAME_LENGTH]
-                    if name:
+                    name = item["value"].strip()
+                    if name and len(name) <= MAX_NAME_LENGTH:
                         valid.append({"fact": "name", "value": name, "time": str(item.get("time", ""))[:40]})
                 elif isinstance(item.get("user"), str) and isinstance(item.get("bot"), str):
-                    valid.append({
-                        "user": item["user"][:MAX_INPUT_LENGTH],
-                        "bot": item["bot"][:MAX_INPUT_LENGTH],
-                        "time": str(item.get("time", ""))[:40],
-                    })
+                    valid.append({"user": item["user"][:MAX_INPUT_LENGTH], "bot": item["bot"][:MAX_INPUT_LENGTH], "time": str(item.get("time", ""))[:40]})
             return valid[-MAX_MEMORY_ITEMS:]
         except (json.JSONDecodeError, OSError, UnicodeError, TypeError):
             return []
@@ -129,11 +110,7 @@ class LocalBot:
                 pass
 
     def _remember(self, text: str, answer: str) -> None:
-        self.memory = (self.memory + [{
-            "user": text[:MAX_INPUT_LENGTH],
-            "bot": answer[:MAX_INPUT_LENGTH],
-            "time": datetime.now().isoformat(timespec="seconds"),
-        }])[-MAX_MEMORY_ITEMS:]
+        self.memory = (self.memory + [{"user": text[:MAX_INPUT_LENGTH], "bot": answer[:MAX_INPUT_LENGTH], "time": datetime.now().isoformat(timespec="seconds")}])[-MAX_MEMORY_ITEMS:]
         self._save_memory()
 
     def clear_memory(self) -> None:
@@ -153,9 +130,8 @@ class LocalBot:
         match = re.search(r"(?:حساب کن|محاسبه کن|جواب)\s*[:：]?\s*(.*)$", value)
         if not match:
             return None
-        expression = match.group(1).strip()
         try:
-            result = _safe_calculate(expression)
+            result = _safe_calculate(match.group(1).strip())
             return f"نتیجه: {result:g}" if isinstance(result, float) else f"نتیجه: {result}"
         except (ValueError, SyntaxError, ZeroDivisionError, OverflowError, MemoryError, RecursionError):
             return "این عبارت ریاضی قابل محاسبه نیست."
@@ -174,25 +150,18 @@ class LocalBot:
         now = datetime.now()
         if not value:
             return "یک پیام بنویس تا پاسخ بدم."
-
-        name_match = (
-            re.fullmatch(r"(?:اسم|نام) من\s+(?:این است|هست|است)\s+(.+)", value)
-            or re.fullmatch(r"(?:اسم|نام) من\s*[:：-]\s*(.+)", value)
-        )
+        name_match = re.fullmatch(r"(?:اسم|نام) من\s+(?:این است|هست|است)\s+(.+)", value) or re.fullmatch(r"(?:اسم|نام) من\s*[:：-]\s*(.+)", value)
         if name_match:
-            name = name_match.group(1).strip(" .،,!؟")[:MAX_NAME_LENGTH]
-            if not name or name in {"چیه", "چیست", "چی", "؟", "?"} or len(name) > MAX_NAME_LENGTH:
+            raw_name = name_match.group(1).strip(" .،,!؟")
+            if not raw_name or len(raw_name) > MAX_NAME_LENGTH or raw_name in {"چیه", "چیست", "چی", "؟", "?"}:
                 return "اسم را کامل بنویس؛ مثلاً: اسم من علی است."
-            return self._save_name(name, now)
-
+            return self._save_name(raw_name, now)
         answer = self._answer_for_math(value)
         if answer is None:
             if any(x in value for x in ("اسم من چیه", "نام من چیه", "من کی هستم")):
-                saved = self._saved_name()
-                answer = f"اسم تو {saved} است." if saved else "هنوز اسمت را به من نگفتی."
+                saved = self._saved_name(); answer = f"اسم تو {saved} است." if saved else "هنوز اسمت را به من نگفتی."
             elif any(x in value for x in ("سلام", "درود", "hello", "hi", "خسته نباشی")):
-                saved = self._saved_name()
-                answer = f"سلام {saved}! 🌷 من بوتی هستم." if saved else "سلام! 🌷 من بوتی هستم. آماده‌ام کمکت کنم."
+                saved = self._saved_name(); answer = f"سلام {saved}! 🌷 من بوتی هستم." if saved else "سلام! 🌷 من بوتی هستم. آماده‌ام کمکت کنم."
             elif any(x in value for x in ("اسمت چیه", "نامت چیه", "تو کی هستی", "خودت رو معرفی")):
                 answer = "من بوتی هستم؛ دستیار محلی و آفلاین برای Termux."
             elif "ساعت" in value or "زمان" in value:
@@ -211,7 +180,6 @@ class LocalBot:
                 answer = "فعلاً آفلاین هستم و دانش محدودی دارم؛ سؤال مشخص‌تری بپرس."
             else:
                 answer = "پیامت دریافت شد. می‌توانی سؤال مشخص بپرسی یا بنویسی «حساب کن: ۱۲ + ۸»."
-
         self._remember(original, answer)
         return answer
 
