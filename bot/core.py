@@ -43,8 +43,8 @@ def normalize(text: str) -> str:
 
 
 def _safe_calculate(expression: str) -> int | float:
-    """Evaluate only basic arithmetic AST nodes; never use eval."""
-    if len(expression) > 80 or not re.fullmatch(r"[0-9+\-*/%.() ]+", expression):
+    """Evaluate bounded arithmetic AST nodes without executing arbitrary code."""
+    if not expression or len(expression) > 80 or not re.fullmatch(r"[0-9+\-*/%.() ]+", expression):
         raise ValueError("unsupported expression")
     tree = ast.parse(expression, mode="eval")
 
@@ -52,7 +52,7 @@ def _safe_calculate(expression: str) -> int | float:
         if isinstance(node, ast.Expression):
             return visit(node.body)
         if isinstance(node, ast.Constant) and isinstance(node.value, (int, float)) and not isinstance(node.value, bool):
-            if abs(node.value) > 10**12:
+            if not (float("-inf") < node.value < float("inf")) or abs(node.value) > 10**12:
                 raise ValueError("number too large")
             return node.value
         if isinstance(node, ast.BinOp) and type(node.op) in _BINARY_OPS:
@@ -60,11 +60,14 @@ def _safe_calculate(expression: str) -> int | float:
             if isinstance(node.op, ast.Pow) and abs(right) > 10:
                 raise ValueError("power too large")
             result = _BINARY_OPS[type(node.op)](left, right)
-            if abs(result) > 10**15:
+            if not isinstance(result, (int, float)) or not (float("-inf") < result < float("inf")) or abs(result) > 10**15:
                 raise ValueError("result too large")
             return result
         if isinstance(node, ast.UnaryOp) and type(node.op) in _UNARY_OPS:
-            return _UNARY_OPS[type(node.op)](visit(node.operand))
+            result = _UNARY_OPS[type(node.op)](visit(node.operand))
+            if abs(result) > 10**15:
+                raise ValueError("result too large")
+            return result
         raise ValueError("unsupported expression")
 
     return visit(tree)
@@ -87,14 +90,17 @@ class LocalBot:
                 if not isinstance(item, dict):
                     continue
                 if item.get("fact") == "name" and isinstance(item.get("value"), str):
-                    item["value"] = item["value"][:MAX_NAME_LENGTH]
-                    valid.append(item)
+                    value = item["value"].strip()[:MAX_NAME_LENGTH]
+                    if value:
+                        valid.append({"fact": "name", "value": value, "time": str(item.get("time", ""))[:40]})
                 elif isinstance(item.get("user"), str) and isinstance(item.get("bot"), str):
-                    item["user"] = item["user"][:MAX_INPUT_LENGTH]
-                    item["bot"] = item["bot"][:MAX_INPUT_LENGTH]
-                    valid.append(item)
+                    valid.append({
+                        "user": item["user"][:MAX_INPUT_LENGTH],
+                        "bot": item["bot"][:MAX_INPUT_LENGTH],
+                        "time": str(item.get("time", ""))[:40],
+                    })
             return valid[-MAX_MEMORY_ITEMS:]
-        except (json.JSONDecodeError, OSError, UnicodeError):
+        except (json.JSONDecodeError, OSError, UnicodeError, TypeError):
             return []
 
     def _save_memory(self) -> None:
@@ -136,13 +142,16 @@ class LocalBot:
         return None
 
     def _answer_for_math(self, value: str) -> str | None:
-        match = re.search(r"(?:حساب کن|محاسبه کن|جواب)\s*[:：]?\s*([0-9+\-*/%.() ]+)$", value)
-        if not match:
+        command_match = re.search(r"(?:حساب کن|محاسبه کن|جواب)\s*[:：]?\s*(.*)$", value)
+        if not command_match:
             return None
+        expression = command_match.group(1).strip()
+        if not expression:
+            return "این عبارت ریاضی قابل محاسبه نیست."
         try:
-            result = _safe_calculate(match.group(1).strip())
+            result = _safe_calculate(expression)
             return f"نتیجه: {result:g}" if isinstance(result, float) else f"نتیجه: {result}"
-        except (ValueError, SyntaxError, ZeroDivisionError, OverflowError):
+        except (ValueError, SyntaxError, ZeroDivisionError, OverflowError, MemoryError, RecursionError):
             return "این عبارت ریاضی قابل محاسبه نیست."
 
     def reply(self, text: str) -> str:
@@ -152,10 +161,13 @@ class LocalBot:
         if not value:
             return "یک پیام بنویس تا پاسخ بدم."
 
-        name_match = re.search(r"(?:اسم|نام) من\s*(?:این است|هست|است)?\s*[:：-]?\s*(.+)", value)
+        name_match = re.fullmatch(
+            r"(?:اسم|نام) من\s*(?:(?:این است|هست|است)\s*[:：-]?\s*|[:：-]\s*)(.+)",
+            value,
+        )
         if name_match:
             name = name_match.group(1).strip(" .،,!؟")[:MAX_NAME_LENGTH]
-            if not name:
+            if not name or name in {"چیه", "چیست", "چی", "؟", "?"}:
                 return "اسم را کامل بنویس؛ مثلاً: اسم من علی است."
             answer = f"خوشحالم که شناختیمت، {name}! این مورد را محلی ذخیره کردم."
             self.memory = [item for item in self.memory if item.get("fact") != "name"]
