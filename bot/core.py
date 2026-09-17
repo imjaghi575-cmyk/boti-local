@@ -12,6 +12,7 @@ MEMORY_FILE = Path(__file__).resolve().parent.parent / "data" / "memory.json"
 MAX_INPUT_LENGTH = 2000
 MAX_MEMORY_ITEMS = 100
 MAX_NAME_LENGTH = 80
+MAX_MEMORY_TEXT_ITEMS = 10
 
 
 def normalize(text: str) -> str:
@@ -41,7 +42,11 @@ class LocalBot:
             data = json.loads(MEMORY_FILE.read_text(encoding="utf-8"))
             if not isinstance(data, list):
                 return []
-            return [item for item in data[-MAX_MEMORY_ITEMS:] if isinstance(item, dict)]
+            valid = []
+            for item in data[-MAX_MEMORY_ITEMS:]:
+                if isinstance(item, dict) and ("user" in item or "fact" in item):
+                    valid.append(item)
+            return valid[-MAX_MEMORY_ITEMS:]
         except (json.JSONDecodeError, OSError, UnicodeError):
             return []
 
@@ -54,8 +59,16 @@ class LocalBot:
                 handle.write(payload)
                 handle.flush()
                 os.fsync(handle.fileno())
+            try:
+                os.chmod(temp_name, 0o600)
+            except OSError:
+                pass
             os.replace(temp_name, MEMORY_FILE)
         except (OSError, UnicodeError):
+            try:
+                os.close(fd)
+            except OSError:
+                pass
             try:
                 os.unlink(temp_name)
             except OSError:
@@ -67,6 +80,7 @@ class LocalBot:
             "bot": answer[:MAX_INPUT_LENGTH],
             "time": datetime.now().isoformat(timespec="seconds"),
         })
+        self.memory = self.memory[-MAX_MEMORY_ITEMS:]
         self._save_memory()
 
     def clear_memory(self) -> None:
@@ -75,6 +89,12 @@ class LocalBot:
 
     def stats(self) -> str:
         return f"تعداد موارد حافظه: {len(self.memory)} از {MAX_MEMORY_ITEMS}"
+
+    def _saved_name(self) -> str | None:
+        for item in reversed(self.memory):
+            if item.get("fact") == "name" and item.get("value"):
+                return str(item["value"])
+        return None
 
     def reply(self, text: str) -> str:
         original = str(text).strip()[:MAX_INPUT_LENGTH]
@@ -87,13 +107,18 @@ class LocalBot:
         if name_match:
             name = name_match.group(1).strip(" .،,!؟")[:MAX_NAME_LENGTH]
             answer = f"خوشحالم که شناختیمت، {name}! این مورد را محلی ذخیره کردم."
+            self.memory = [item for item in self.memory if item.get("fact") != "name"]
             self.memory.append({"fact": "name", "value": name, "time": now.isoformat(timespec="seconds")})
             self.memory = self.memory[-MAX_MEMORY_ITEMS:]
             self._save_memory()
             return answer
 
-        if any(x in value for x in ("سلام", "درود", "hello", "hi", "خسته نباشی")):
-            answer = "سلام! 🌷 من بوتی هستم. آماده‌ام کمکت کنم."
+        if any(x in value for x in ("اسم من چیه", "نام من چیه", "من کی هستم")):
+            saved_name = self._saved_name()
+            answer = f"اسم تو {saved_name} است." if saved_name else "هنوز اسمت را به من نگفتی."
+        elif any(x in value for x in ("سلام", "درود", "hello", "hi", "خسته نباشی")):
+            saved_name = self._saved_name()
+            answer = f"سلام {saved_name}! 🌷 من بوتی هستم." if saved_name else "سلام! 🌷 من بوتی هستم. آماده‌ام کمکت کنم."
         elif any(x in value for x in ("اسمت چیه", "نامت چیه", "تو کی هستی", "خودت رو معرفی")):
             answer = "من بوتی هستم؛ یک دستیار محلی، آفلاین و قابل توسعه برای Termux."
         elif "ساعت" in value or "زمان" in value:
@@ -103,15 +128,15 @@ class LocalBot:
         elif "یادت" in value or "حافظه" in value:
             answer = self.memory_text()
         elif "کمک" in value or "چه کار" in value or "قابلیت" in value:
-            answer = "می‌تونم گفت‌وگوی پایه انجام بدم، زمان و تاریخ سیستم رو بگم و اطلاعات گفتگو رو محلی نگه دارم."
+            answer = "می‌تونم گفت‌وگوی پایه انجام بدم، نامت را به خاطر بسپارم، زمان و تاریخ سیستم را بگم و اطلاعات گفتگو را محلی نگه دارم."
         elif any(x in value for x in ("ممنون", "مرسی", "سپاس")):
             answer = "خواهش می‌کنم! 😊"
         elif "خوبی" in value or "حالت چطوره" in value:
             answer = "خوبم و آماده‌ام! تو چطوری؟"
         elif value.endswith(("؟", "?")):
-            answer = "فعلاً آفلاین هستم و دانش محدودی دارم؛ اما می‌تونیم قابلیت‌های بیشتری به من اضافه کنیم."
+            answer = "فعلاً آفلاین هستم و دانش محدودی دارم؛ اما می‌تونم با قابلیت‌های محلی و بدون اینترنت توسعه پیدا کنم."
         else:
-            answer = "پیامت دریافت شد. برای راهنمایی، درباره قابلیت‌ها یا حافظه از من سؤال کن."
+            answer = "پیامت دریافت شد. برای شروع می‌تونی سلام کنی، اسمت را بگی، درباره حافظه یا قابلیت‌ها سؤال کنی."
 
         self._remember(original, answer)
         return answer
@@ -119,10 +144,10 @@ class LocalBot:
     def memory_text(self) -> str:
         if not self.memory:
             return "حافظه هنوز خالی است."
-        lines = ["حافظه محلی (۱۰ مورد آخر):"]
-        for item in self.memory[-10:]:
-            if "fact" in item:
-                lines.append(f"- یادداشت: {item.get('value', '')}")
+        lines = [f"حافظه محلی ({MAX_MEMORY_TEXT_ITEMS} مورد آخر):"]
+        for item in self.memory[-MAX_MEMORY_TEXT_ITEMS:]:
+            if item.get("fact") == "name":
+                lines.append(f"- نام ذخیره‌شده: {item.get('value', '')}")
             else:
                 lines.append(f"- شما: {item.get('user', '')}\n  بات: {item.get('bot', '')}")
         return "\n".join(lines)
