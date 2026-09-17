@@ -5,13 +5,13 @@ from __future__ import annotations
 import os
 import sys
 
+from bot.core import MAX_INPUT_LENGTH, LocalBot
+
 os.environ.setdefault("LANG", "C.UTF-8")
 os.environ.setdefault("LC_ALL", "C.UTF-8")
 for stream in (sys.stdout, sys.stderr):
     if hasattr(stream, "reconfigure"):
         stream.reconfigure(encoding="utf-8", errors="replace")
-
-from bot.core import LocalBot, MAX_INPUT_LENGTH
 
 RESET = "\033[0m"
 CYAN = "\033[96m"
@@ -69,7 +69,9 @@ def main() -> None:
             print("خدانگهدار 🌱")
             break
         if command in {"/clear-screen", "/صفحه"}:
-            clear(); banner(); continue
+            clear()
+            banner()
+            continue
         if command == "/about":
             print_answer("بوتی یک ربات محلی فارسی و بدون وابستگی اجباری به اینترنت است؛ داده‌ها در data/memory.json ذخیره می‌شوند.")
             continue
