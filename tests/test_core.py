@@ -43,6 +43,12 @@ class CoreTests(unittest.TestCase):
         bot = core.LocalBot()
         self.assertEqual(bot.memory, [])
 
+    def test_invalid_memory_items_are_filtered(self):
+        self.memory_path.write_text(json.dumps([{"x": 1}, {"user": 12}, {"user": "ok", "bot": "fine"}], ensure_ascii=False), encoding="utf-8")
+        bot = core.LocalBot()
+        self.assertEqual(len(bot.memory), 1)
+        self.assertEqual(bot.memory[0]["user"], "ok")
+
     def test_clear_memory(self):
         bot = core.LocalBot()
         bot.reply("سلام")
@@ -55,6 +61,15 @@ class CoreTests(unittest.TestCase):
         for index in range(core.MAX_MEMORY_ITEMS + 20):
             bot.reply(f"پیام {index}")
         self.assertLessEqual(len(bot.memory), core.MAX_MEMORY_ITEMS)
+
+    def test_safe_calculator(self):
+        bot = core.LocalBot()
+        self.assertIn("20", bot.reply("حساب کن: ۱۲ + ۸"))
+        self.assertIn("قابل محاسبه نیست", bot.reply("حساب کن: __import__('os')"))
+
+    def test_calculator_rejects_division_by_zero(self):
+        bot = core.LocalBot()
+        self.assertIn("قابل محاسبه نیست", bot.reply("حساب کن: 10 / 0"))
 
 
 if __name__ == "__main__":
