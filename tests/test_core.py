@@ -86,6 +86,26 @@ class CoreTests(unittest.TestCase):
         bot = core.LocalBot()
         self.assertIn("قابل محاسبه نیست", bot.reply("جواب: 2 // 0"))
 
+    def test_memory_commands(self):
+        bot = core.LocalBot()
+        self.assertIn("ذخیره", bot.reply("/remember رنگ=آبی"))
+        self.assertIn("آبی", bot.reply("/recall رنگ"))
+        self.assertIn("حذف", bot.reply("/forget رنگ"))
+        self.assertIn("پیدا نشد", bot.reply("/recall رنگ"))
+
+    def test_context_and_repeat_commands(self):
+        bot = core.LocalBot()
+        bot.reply("موضوع امروز پایتون است")
+        self.assertIn("پایتون", bot.reply("یادته"))
+        self.assertEqual(bot.reply("/repeat سلام دنیا"), "سلام دنیا")
+
+    def test_clear_command_removes_context(self):
+        bot = core.LocalBot()
+        bot.reply("سلام")
+        self.assertIn("پاک", bot.reply("/clear"))
+        self.assertEqual(bot.memory, [])
+        self.assertEqual(bot.context, [])
+
 
 if __name__ == "__main__":
     unittest.main()
