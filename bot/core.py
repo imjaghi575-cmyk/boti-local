@@ -1,7 +1,9 @@
-"""Secure, dependency-free core for the Persian-friendly local assistant."""
+"""Secure, dependency-free Persian-friendly local assistant core."""
 from __future__ import annotations
 
+import ast
 import json
+import operator
 import os
 import re
 import tempfile
@@ -14,9 +16,19 @@ MAX_MEMORY_ITEMS = 100
 MAX_NAME_LENGTH = 80
 MAX_MEMORY_TEXT_ITEMS = 10
 
+_BINARY_OPS = {
+    ast.Add: operator.add,
+    ast.Sub: operator.sub,
+    ast.Mult: operator.mul,
+    ast.Div: operator.truediv,
+    ast.FloorDiv: operator.floordiv,
+    ast.Mod: operator.mod,
+    ast.Pow: operator.pow,
+}
+_UNARY_OPS = {ast.UAdd: operator.pos, ast.USub: operator.neg}
+
 
 def normalize(text: str) -> str:
-    """Normalize common Persian/Arabic variants and invisible characters."""
     if not isinstance(text, str):
         return ""
     replacements = str.maketrans({
@@ -28,6 +40,34 @@ def normalize(text: str) -> str:
     text = text.translate(replacements)
     text = re.sub(r"[\u200b\u200c\u200d\ufeff]", " ", text)
     return re.sub(r"\s+", " ", text.strip().casefold())
+
+
+def _safe_calculate(expression: str) -> int | float:
+    """Evaluate only basic arithmetic AST nodes; never use eval."""
+    if len(expression) > 80 or not re.fullmatch(r"[0-9+\-*/%.() ]+", expression):
+        raise ValueError("unsupported expression")
+    tree = ast.parse(expression, mode="eval")
+
+    def visit(node: ast.AST) -> int | float:
+        if isinstance(node, ast.Expression):
+            return visit(node.body)
+        if isinstance(node, ast.Constant) and isinstance(node.value, (int, float)) and not isinstance(node.value, bool):
+            if abs(node.value) > 10**12:
+                raise ValueError("number too large")
+            return node.value
+        if isinstance(node, ast.BinOp) and type(node.op) in _BINARY_OPS:
+            left, right = visit(node.left), visit(node.right)
+            if isinstance(node.op, ast.Pow) and abs(right) > 10:
+                raise ValueError("power too large")
+            result = _BINARY_OPS[type(node.op)](left, right)
+            if abs(result) > 10**15:
+                raise ValueError("result too large")
+            return result
+        if isinstance(node, ast.UnaryOp) and type(node.op) in _UNARY_OPS:
+            return _UNARY_OPS[type(node.op)](visit(node.operand))
+        raise ValueError("unsupported expression")
+
+    return visit(tree)
 
 
 class LocalBot:
@@ -44,14 +84,20 @@ class LocalBot:
                 return []
             valid = []
             for item in data[-MAX_MEMORY_ITEMS:]:
-                if isinstance(item, dict) and ("user" in item or "fact" in item):
+                if not isinstance(item, dict):
+                    continue
+                if item.get("fact") == "name" and isinstance(item.get("value"), str):
+                    item["value"] = item["value"][:MAX_NAME_LENGTH]
+                    valid.append(item)
+                elif isinstance(item.get("user"), str) and isinstance(item.get("bot"), str):
+                    item["user"] = item["user"][:MAX_INPUT_LENGTH]
+                    item["bot"] = item["bot"][:MAX_INPUT_LENGTH]
                     valid.append(item)
             return valid[-MAX_MEMORY_ITEMS:]
         except (json.JSONDecodeError, OSError, UnicodeError):
             return []
 
     def _save_memory(self) -> None:
-        """Write memory atomically to reduce corruption after interruption."""
         payload = json.dumps(self.memory[-MAX_MEMORY_ITEMS:], ensure_ascii=False, indent=2)
         fd, temp_name = tempfile.mkstemp(prefix="memory-", suffix=".tmp", dir=MEMORY_FILE.parent)
         try:
@@ -59,10 +105,7 @@ class LocalBot:
                 handle.write(payload)
                 handle.flush()
                 os.fsync(handle.fileno())
-            try:
-                os.chmod(temp_name, 0o600)
-            except OSError:
-                pass
+            os.chmod(temp_name, 0o600)
             os.replace(temp_name, MEMORY_FILE)
         except (OSError, UnicodeError):
             try:
@@ -75,11 +118,7 @@ class LocalBot:
                 pass
 
     def _remember(self, text: str, answer: str) -> None:
-        self.memory.append({
-            "user": text[:MAX_INPUT_LENGTH],
-            "bot": answer[:MAX_INPUT_LENGTH],
-            "time": datetime.now().isoformat(timespec="seconds"),
-        })
+        self.memory.append({"user": text[:MAX_INPUT_LENGTH], "bot": answer[:MAX_INPUT_LENGTH], "time": datetime.now().isoformat(timespec="seconds")})
         self.memory = self.memory[-MAX_MEMORY_ITEMS:]
         self._save_memory()
 
@@ -96,6 +135,16 @@ class LocalBot:
                 return str(item["value"])
         return None
 
+    def _answer_for_math(self, value: str) -> str | None:
+        match = re.search(r"(?:حساب کن|محاسبه کن|جواب)\s*[:：]?\s*([0-9+\-*/%.() ]+)$", value)
+        if not match:
+            return None
+        try:
+            result = _safe_calculate(match.group(1).strip())
+            return f"نتیجه: {result:g}" if isinstance(result, float) else f"نتیجه: {result}"
+        except (ValueError, SyntaxError, ZeroDivisionError, OverflowError):
+            return "این عبارت ریاضی قابل محاسبه نیست."
+
     def reply(self, text: str) -> str:
         original = str(text).strip()[:MAX_INPUT_LENGTH]
         value = normalize(original)
@@ -106,6 +155,8 @@ class LocalBot:
         name_match = re.search(r"(?:اسم|نام) من\s*(?:این است|هست|است)?\s*[:：-]?\s*(.+)", value)
         if name_match:
             name = name_match.group(1).strip(" .،,!؟")[:MAX_NAME_LENGTH]
+            if not name:
+                return "اسم را کامل بنویس؛ مثلاً: اسم من علی است."
             answer = f"خوشحالم که شناختیمت، {name}! این مورد را محلی ذخیره کردم."
             self.memory = [item for item in self.memory if item.get("fact") != "name"]
             self.memory.append({"fact": "name", "value": name, "time": now.isoformat(timespec="seconds")})
@@ -113,14 +164,17 @@ class LocalBot:
             self._save_memory()
             return answer
 
-        if any(x in value for x in ("اسم من چیه", "نام من چیه", "من کی هستم")):
+        math_answer = self._answer_for_math(value)
+        if math_answer is not None:
+            answer = math_answer
+        elif any(x in value for x in ("اسم من چیه", "نام من چیه", "من کی هستم")):
             saved_name = self._saved_name()
             answer = f"اسم تو {saved_name} است." if saved_name else "هنوز اسمت را به من نگفتی."
         elif any(x in value for x in ("سلام", "درود", "hello", "hi", "خسته نباشی")):
             saved_name = self._saved_name()
             answer = f"سلام {saved_name}! 🌷 من بوتی هستم." if saved_name else "سلام! 🌷 من بوتی هستم. آماده‌ام کمکت کنم."
         elif any(x in value for x in ("اسمت چیه", "نامت چیه", "تو کی هستی", "خودت رو معرفی")):
-            answer = "من بوتی هستم؛ یک دستیار محلی، آفلاین و قابل توسعه برای Termux."
+            answer = "من بوتی هستم؛ دستیار محلی و آفلاین برای Termux. می‌توانم حافظه، محاسبه ساده، زمان، تاریخ و گفت‌وگوی پایه را مدیریت کنم."
         elif "ساعت" in value or "زمان" in value:
             answer = f"ساعت سیستم: {now.strftime('%H:%M:%S')}"
         elif "تاریخ" in value or "امروز" in value:
@@ -128,15 +182,15 @@ class LocalBot:
         elif "یادت" in value or "حافظه" in value:
             answer = self.memory_text()
         elif "کمک" in value or "چه کار" in value or "قابلیت" in value:
-            answer = "می‌تونم گفت‌وگوی پایه انجام بدم، نامت را به خاطر بسپارم، زمان و تاریخ سیستم را بگم و اطلاعات گفتگو را محلی نگه دارم."
+            answer = "قابلیت‌ها: گفت‌وگوی پایه، ذخیره نام، حافظه محلی، محاسبه امن عبارت‌های ساده، زمان و تاریخ سیستم. فرمان‌ها: /help، /memory، /stats، /forget، /clear و /exit."
         elif any(x in value for x in ("ممنون", "مرسی", "سپاس")):
             answer = "خواهش می‌کنم! 😊"
         elif "خوبی" in value or "حالت چطوره" in value:
             answer = "خوبم و آماده‌ام! تو چطوری؟"
         elif value.endswith(("؟", "?")):
-            answer = "فعلاً آفلاین هستم و دانش محدودی دارم؛ اما می‌تونم با قابلیت‌های محلی و بدون اینترنت توسعه پیدا کنم."
+            answer = "فعلاً آفلاین هستم و دانش محدودی دارم. می‌توانی از قابلیت‌های محلی، حافظه یا محاسبه ساده استفاده کنی."
         else:
-            answer = "پیامت دریافت شد. برای شروع می‌تونی سلام کنی، اسمت را بگی، درباره حافظه یا قابلیت‌ها سؤال کنی."
+            answer = "پیامت دریافت شد. می‌توانی سؤال مشخص بپرسی، نامت را معرفی کنی یا بنویسی «حساب کن: ۱۲ + ۸»."
 
         self._remember(original, answer)
         return answer
@@ -144,7 +198,7 @@ class LocalBot:
     def memory_text(self) -> str:
         if not self.memory:
             return "حافظه هنوز خالی است."
-        lines = [f"حافظه محلی ({MAX_MEMORY_TEXT_ITEMS} مورد آخر):"]
+        lines = [f"حافظه محلی ({min(MAX_MEMORY_TEXT_ITEMS, len(self.memory))} مورد آخر):"]
         for item in self.memory[-MAX_MEMORY_TEXT_ITEMS:]:
             if item.get("fact") == "name":
                 lines.append(f"- نام ذخیره‌شده: {item.get('value', '')}")
