@@ -9,6 +9,10 @@ on:
 permissions:
   contents: read
 
+env:
+  PYTHONUTF8: "1"
+  PYTHONDONTWRITEBYTECODE: "1"
+
 concurrency:
   group: ci-${{ github.workflow }}-${{ github.ref }}
   cancel-in-progress: true
@@ -30,7 +34,11 @@ jobs:
           cache: pip
       - name: Upgrade pip
         run: python -m pip install --upgrade pip
+      - name: Install dependencies
+        run: python -m pip install -r requirements.txt
       - name: Compile source
         run: python -m compileall -q main.py bot tests
       - name: Run tests
         run: python -m unittest discover -s tests -v
+      - name: Import smoke test
+        run: python -c "from bot.core import LocalBot; print(LocalBot().stats())"
