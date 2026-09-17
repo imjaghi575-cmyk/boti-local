@@ -1,13 +1,18 @@
 #!/usr/bin/env python3
-"""Boti Local: a small Persian-friendly terminal chat UI."""
+"""Boti Local: Persian-friendly terminal chat UI for Termux."""
 import os
 import sys
-from bot.core import LocalBot
 
-# Encourage UTF-8 in Termux/Linux without changing the user's global settings.
-os.environ.setdefault("PYTHONIOENCODING", "utf-8")
+# Configure the current Python streams explicitly; changing environment variables
+# alone is not enough after Python has already started.
 os.environ.setdefault("LANG", "C.UTF-8")
 os.environ.setdefault("LC_ALL", "C.UTF-8")
+if hasattr(sys.stdout, "reconfigure"):
+    sys.stdout.reconfigure(encoding="utf-8", errors="replace")
+if hasattr(sys.stderr, "reconfigure"):
+    sys.stderr.reconfigure(encoding="utf-8", errors="replace")
+
+from bot.core import LocalBot
 
 RESET = "\033[0m"
 CYAN = "\033[96m"
@@ -32,7 +37,7 @@ def main():
     bot = LocalBot()
     clear()
     banner()
-    print(f"{GREEN}بات:{RESET} سلام! من آماده‌ام. پیامت را بنویس.\n")
+    print(f"{GREEN}بات ›{RESET} سلام! من آماده‌ام. پیامت را بنویس.\n")
     while True:
         try:
             text = input(f"{YELLOW}شما › {RESET}").strip()
