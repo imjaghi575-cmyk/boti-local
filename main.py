@@ -33,7 +33,7 @@ def banner() -> None:
     print(paint(CYAN, "│") + "        🤖  B O T I  L O C A L             " + paint(CYAN, "│"))
     print(paint(CYAN, "│") + "     ربات محلی فارسی برای ترموکس            " + paint(CYAN, "│"))
     print(paint(CYAN, "╰────────────────────────────────────────────╯"))
-    print(paint(DIM, "فرمان‌ها: /help  /clear  /memory  /stats  /forget  /about  /exit\n"))
+    print(paint(DIM, "فرمان‌ها: /help  /clear  /memory  /stats  /forget  /time  /date  /calc  /repeat  /about  /exit\n"))
 
 
 def main() -> None:
@@ -63,25 +63,22 @@ def main() -> None:
             break
         if command == "/clear":
             clear(); banner(); continue
-        if command == "/help":
-            print("/clear پاک‌کردن صفحه | /memory نمایش حافظه | /stats آمار | /forget حذف حافظه | /about درباره ربات | /exit خروج")
-            print("برای محاسبه امن بنویس: حساب کن: ۱۲ + ۸\n")
+        if command in ("/help", "/راهنما"):
+            print(bot.reply("/help") + "\n")
             continue
-        if command == "/memory":
-            try:
-                print(bot.memory_text() + "\n")
-            except Exception:
-                print("نمایش حافظه ممکن نشد.\n")
+        if command in ("/memory", "/حافظه"):
+            print(bot.memory_text() + "\n")
             continue
-        if command == "/stats":
+        if command in ("/stats", "/آمار"):
             print(bot.stats() + "\n")
             continue
-        if command == "/forget":
-            try:
-                bot.clear_memory()
-                print("حافظه محلی پاک شد.\n")
-            except Exception:
-                print("پاک‌کردن حافظه انجام نشد.\n")
+        if command in ("/forget", "/پاک کردن حافظه"):
+            bot.clear_memory()
+            print("حافظه محلی پاک شد.\n")
+            continue
+        if command in ("/forget-name", "/فراموشی نام"):
+            bot.forget_name()
+            print("نام ذخیره‌شده حذف شد.\n")
             continue
         if command == "/about":
             print("بوتی یک ربات محلی و بدون وابستگی اجباری به اینترنت است. داده‌ها در data/memory.json ذخیره می‌شوند.\n")
