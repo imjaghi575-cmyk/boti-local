@@ -18,8 +18,8 @@ class CoreTests(unittest.TestCase):
         self.patch.stop()
         self.tmp.cleanup()
 
-    def test_normalize_persian_variants(self):
-        self.assertEqual(core.normalize(" كي  من‌وم ۱۲۳ "), "کی من وم 123")
+    def test_normalize_persian_and_arabic_variants(self):
+        self.assertEqual(core.normalize(" كي  من‌وم ۱۲۳ ١٢٣ "), "کی من وم 123 123")
 
     def test_reply_greeting(self):
         bot = core.LocalBot()
@@ -37,6 +37,12 @@ class CoreTests(unittest.TestCase):
         restored = core.LocalBot()
         self.assertIn("رضا", restored.reply("اسم من چیه"))
         self.assertNotIn("علی", restored.memory_text())
+
+    def test_name_question_is_not_saved(self):
+        bot = core.LocalBot()
+        answer = bot.reply("اسم من چیه")
+        self.assertIn("هنوز اسمت", answer)
+        self.assertIsNone(bot._saved_name())
 
     def test_malformed_memory_is_ignored(self):
         self.memory_path.write_text("{bad json", encoding="utf-8")
@@ -71,6 +77,14 @@ class CoreTests(unittest.TestCase):
     def test_calculator_rejects_division_by_zero(self):
         bot = core.LocalBot()
         self.assertIn("قابل محاسبه نیست", bot.reply("حساب کن: 10 / 0"))
+
+    def test_calculator_rejects_non_finite_result(self):
+        bot = core.LocalBot()
+        self.assertIn("قابل محاسبه نیست", bot.reply("حساب کن: 1e309"))
+
+    def test_calculator_rejects_unsupported_syntax(self):
+        bot = core.LocalBot()
+        self.assertIn("قابل محاسبه نیست", bot.reply("جواب: 2 // 0"))
 
 
 if __name__ == "__main__":
