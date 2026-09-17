@@ -24,7 +24,8 @@ def paint(code: str, text: str) -> str:
 
 
 def clear() -> None:
-    print("\033[2J\033[H", end="")
+    if USE_COLOR:
+        print("\033[2J\033[H", end="")
 
 
 def banner() -> None:
@@ -32,11 +33,16 @@ def banner() -> None:
     print(paint(CYAN, "│") + "        🤖  B O T I  L O C A L             " + paint(CYAN, "│"))
     print(paint(CYAN, "│") + "     ربات محلی فارسی برای ترموکس            " + paint(CYAN, "│"))
     print(paint(CYAN, "╰────────────────────────────────────────────╯"))
-    print(paint(DIM, "فرمان‌ها: /help  /clear  /memory  /forget  /about  /exit\n"))
+    print(paint(DIM, "فرمان‌ها: /help  /clear  /memory  /stats  /forget  /about  /exit\n"))
 
 
 def main() -> None:
-    bot = LocalBot()
+    try:
+        bot = LocalBot()
+    except (OSError, UnicodeError) as exc:
+        print(f"خطا در آماده‌سازی حافظه محلی: {exc}")
+        return
+
     clear()
     banner()
     print(paint(GREEN, "بات ›") + " سلام! من آماده‌ام. پیامت را بنویس.\n")
@@ -58,14 +64,23 @@ def main() -> None:
         if command == "/clear":
             clear(); banner(); continue
         if command == "/help":
-            print("/clear پاک‌کردن صفحه | /memory نمایش حافظه | /forget حذف حافظه | /about درباره ربات | /exit خروج\n")
+            print("/clear پاک‌کردن صفحه | /memory نمایش حافظه | /stats آمار | /forget حذف حافظه | /about درباره ربات | /exit خروج\n")
             continue
         if command == "/memory":
-            print(bot.memory_text() + "\n")
+            try:
+                print(bot.memory_text() + "\n")
+            except Exception:
+                print("نمایش حافظه ممکن نشد.\n")
+            continue
+        if command == "/stats":
+            print(bot.stats() + "\n")
             continue
         if command == "/forget":
-            bot.clear_memory()
-            print("حافظه محلی پاک شد.\n")
+            try:
+                bot.clear_memory()
+                print("حافظه محلی پاک شد.\n")
+            except Exception:
+                print("پاک‌کردن حافظه انجام نشد.\n")
             continue
         if command == "/about":
             print("بوتی یک ربات محلی و بدون وابستگی اجباری به اینترنت است. داده‌ها در data/memory.json ذخیره می‌شوند.\n")
