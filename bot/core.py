@@ -1,25 +1,32 @@
-"""Core logic for the offline Persian-friendly Boti Local assistant."""
+"""Secure, dependency-free core for the Persian-friendly local assistant."""
 from __future__ import annotations
 
 import json
+import os
 import re
+import tempfile
 from datetime import datetime
 from pathlib import Path
 
 MEMORY_FILE = Path(__file__).resolve().parent.parent / "data" / "memory.json"
+MAX_INPUT_LENGTH = 2000
+MAX_MEMORY_ITEMS = 100
+MAX_NAME_LENGTH = 80
 
 
 def normalize(text: str) -> str:
-    """Normalize common Arabic/Persian character variants for matching."""
-    return (
-        text.strip().casefold()
-        .replace("ي", "ی")
-        .replace("ى", "ی")
-        .replace("ك", "ک")
-        .replace("ۀ", "ه")
-        .replace("ة", "ه")
-        .replace("‌", " ")
-    )
+    """Normalize common Persian/Arabic variants and invisible characters."""
+    if not isinstance(text, str):
+        return ""
+    replacements = str.maketrans({
+        "ي": "ی", "ى": "ی", "ك": "ک", "ۀ": "ه", "ة": "ه",
+        "ؤ": "و", "إ": "ا", "أ": "ا", "ٱ": "ا",
+        "۰": "0", "۱": "1", "۲": "2", "۳": "3", "۴": "4",
+        "۵": "5", "۶": "6", "۷": "7", "۸": "8", "۹": "9",
+    })
+    text = text.translate(replacements)
+    text = re.sub(r"[\u200b\u200c\u200d\ufeff]", " ", text)
+    return re.sub(r"\s+", " ", text.strip().casefold())
 
 
 class LocalBot:
@@ -32,41 +39,56 @@ class LocalBot:
             return []
         try:
             data = json.loads(MEMORY_FILE.read_text(encoding="utf-8"))
-            return data if isinstance(data, list) else []
-        except (json.JSONDecodeError, OSError):
+            if not isinstance(data, list):
+                return []
+            return [item for item in data[-MAX_MEMORY_ITEMS:] if isinstance(item, dict)]
+        except (json.JSONDecodeError, OSError, UnicodeError):
             return []
 
     def _save_memory(self) -> None:
+        """Write memory atomically to reduce corruption after interruption."""
+        payload = json.dumps(self.memory[-MAX_MEMORY_ITEMS:], ensure_ascii=False, indent=2)
+        fd, temp_name = tempfile.mkstemp(prefix="memory-", suffix=".tmp", dir=MEMORY_FILE.parent)
         try:
-            MEMORY_FILE.write_text(
-                json.dumps(self.memory[-100:], ensure_ascii=False, indent=2),
-                encoding="utf-8",
-            )
-        except OSError:
-            pass
+            with os.fdopen(fd, "w", encoding="utf-8") as handle:
+                handle.write(payload)
+                handle.flush()
+                os.fsync(handle.fileno())
+            os.replace(temp_name, MEMORY_FILE)
+        except (OSError, UnicodeError):
+            try:
+                os.unlink(temp_name)
+            except OSError:
+                pass
 
     def _remember(self, text: str, answer: str) -> None:
         self.memory.append({
-            "user": text,
-            "bot": answer,
+            "user": text[:MAX_INPUT_LENGTH],
+            "bot": answer[:MAX_INPUT_LENGTH],
             "time": datetime.now().isoformat(timespec="seconds"),
         })
         self._save_memory()
 
+    def clear_memory(self) -> None:
+        self.memory.clear()
+        self._save_memory()
+
+    def stats(self) -> str:
+        return f"تعداد موارد حافظه: {len(self.memory)} از {MAX_MEMORY_ITEMS}"
+
     def reply(self, text: str) -> str:
-        original = text.strip()
+        original = str(text).strip()[:MAX_INPUT_LENGTH]
         value = normalize(original)
         now = datetime.now()
-
         if not value:
             return "یک پیام بنویس تا پاسخ بدم."
 
-        # Simple local memory: the user can teach the bot a name or fact.
         name_match = re.search(r"(?:اسم|نام) من\s*(?:این است|هست|است)?\s*[:：-]?\s*(.+)", value)
         if name_match:
-            name = name_match.group(1).strip(" .،,!؟")
+            name = name_match.group(1).strip(" .،,!؟")[:MAX_NAME_LENGTH]
             answer = f"خوشحالم که شناختیمت، {name}! این مورد را محلی ذخیره کردم."
             self.memory.append({"fact": "name", "value": name, "time": now.isoformat(timespec="seconds")})
+            self.memory = self.memory[-MAX_MEMORY_ITEMS:]
             self._save_memory()
             return answer
 
