@@ -66,6 +66,7 @@ class CoreTests(unittest.TestCase):
         bot = core.LocalBot()
         self.assertIn("20", bot.reply("حساب کن: ۱۲ + ۸"))
         self.assertIn("قابل محاسبه نیست", bot.reply("حساب کن: __import__('os')"))
+        self.assertIn("25", bot.reply("محاسبه کن: ۵ * ۵"))
 
     def test_calculator_rejects_division_by_zero(self):
         bot = core.LocalBot()
